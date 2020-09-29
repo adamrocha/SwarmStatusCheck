@@ -31,49 +31,51 @@
 
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# updated by smiotke 2020-04-28 to support worker checks too
+# modified by Adam Rocha 2020-08-05
+
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+worker=( $( docker node ls | grep -v ENGINE | grep -v Ready ) )
 
+# 'docker node ls' provides the status of manager nodes. It exits with exit code 2 if the swarm is unhealthy.
+array=( $(docker node ls --format \{\{.ManagerStatus\}\}) )
 
-
-is_manager=$(docker info | grep “Is Manager” | awk ‘{print $3}’) # checks if the node is worker node or not.
-
-if [ “x$is_manager” = “xfalse” ]
-then 
-        echo "OK - This is workernode."
-        exit 0
-fi
-
-arr=( $(docker node ls --format {{.ManagerStatus}}) )
-if [ $? -gt 0 ];
-then
-        echo "CRITICAL - Swarm is Unhealthy (not in quorum)"              # 'docker node ls' provides the status of manager nodes. It exits with exit code 2 if the swarm is unhealthy.
-        exit 2
+if [ $? -gt 0 ]; then
+    echo "CRITICAL - Swarm is Unhealthy (not in quorum)"
+    exit 2
 else
-        reqStatus='Leader'
-        altStatus='Reachable'
-        fg=0
-        for element in "${arr[@]}";
-        do
-                if [[ "$element" == "$reqStatus" || "$element" == "$altStatus" ]];
-                then
-                        fg=$((fg+1))                                       # increases the value of fg by one each time it encounters a reachable manager or the leader.
-                fi
+    reqStatus='Leader'
+    altStatus='Reachable'
+    fg=0
+        for element in "${array[@]}"; do
+            if [[ "$element" == "$reqStatus" || "$element" == "$altStatus" ]]; then
+                # increases the value of fg by one each time it encounters a reachable manager or the leader.
+                fg=$((fg+1))
+            fi
         done
-        n=${#arr[@]}                                                       # n is the number of manager nodes in the swarm quorum.
-        if [ "$n" -gt "$fg" ];
-        then
-                n=$((n/2))
-                if [ "$fg" -gt "$n" ];
-                then
-                        echo "WARNING - Some manager is down"              # if any of the manager is down then it returns a warning
-                        exit 1
-                else
-                        echo "CRITICAL - Swarm is Unhealthy (not in quorum)"  # if more than half of the managers are unhealthy, then it shows that the swarm cluster is in Critical state.
-                        exit 2
-                fi
-        else
-                echo "OK - Swarm is Healthy (in quorum)"
-                exit 0
-        fi
+    # n is the number of manager nodes in the swarm quorum.
+# Use if salting # {% raw -%}
+    n=${#array[@]}
+# Use is salting # {% endraw -%}
+    if [ "$n" -gt "$fg" ]; then
+        n=$((n/2))
+            if [ "$fg" -gt "$n" ];
+            then
+                # if any of the manager is down then it returns critical because we need to know if a manager is down
+                echo "CRITICAL - Some manager is down"
+                exit 2
+            else
+                # if more than half of the managers are unhealthy, then it shows that the swarm cluster is in Critical state.
+                echo "CRITICAL - Swarm is Unhealthy (not in quorum)"
+                exit 2
+            fi
+    elif [ "$worker" ]; then
+        echo "CRITICAL - Swarm Workers are not healthy"
+        exit 2
+    else
+        echo "OK - Swarm is Healthy, and in quorum"
+        exit 0
+    fi
 fi
